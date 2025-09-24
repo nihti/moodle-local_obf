@@ -690,6 +690,21 @@ class obf_client {
             throw new Exception("Invalid badge response");
         }
 
+        // Get all aliases for the client.
+        $url_aliases = $this->obf_url() . '/v2/client/' . $this->client_id() . '/alias';
+        $res_aliases = $this->request('get', $url_aliases);
+        $data_aliases = json_decode($res_aliases, true);
+        $result_aliases = $data_aliases['result'] ?? [];
+
+        // Filter aliases that are available for this badge.
+        $available_aliases = [];
+
+        foreach ($result_aliases as $alias) {
+            if (in_array($alias['id'], $badge['client_alias_id'] ?? [])) {
+                $available_aliases[] = $alias;
+            }
+        }
+
         $content = $badge['content'][0] ?? [];
 
         return [
@@ -712,6 +727,7 @@ class obf_client {
             'expires' => $badge['expires'] ?? 0,
             'client_id' => $badge['creator']['id'] ?? null, // Not used yet.
             'client_alias_id' => $badge['client_alias_id'] ?? [], // Not used yet.
+            'aliases' => $available_aliases,
             'criteria_html' => $content['criteria'] ?? '',
             // New Badge v3 fields start.
             'achievement_type' => $content['achievement_type'] ?? '',
@@ -838,19 +854,25 @@ class obf_client {
                     $log_entry = json_decode($event['log_entry'], true);
                 }
 
+                // If suborganisation issued the badge, get the suborganisation id.
+                $issuerid = $event['client_alias_id'] ?? null;
+                if (is_array($issuerid)) {
+                    $issuerid = reset($issuerid);
+                }
                 $out[] = array(
-                    'id' => $event['id'],
-                    'name' => $event['name'] ?? '',
-                    'recipient' => [],
-                    'recipient_count' => $event['recipient_count'],
-                    'issued_on' => $event['issued_on'] ?? null,
-                    'badge_id' => $event['badge_id'] ?? null,
-                    'expires' => $event['expires_on'] ?? null,
-                    'revoked' => [],
-                    'log_entry' => $log_entry ?? [],
-                    'timestamp' => $event['ctime'] ?? null,
-                    '_total' => $data['total']
-                );
+                        'id' => $event['id'],
+                        'name' => $event['name'] ?? '',
+                        'recipient' => [],
+                        'recipient_count' => $event['recipient_count'],
+                        'issued_on' => $event['issued_on'] ?? null,
+                        'badge_id' => $event['badge_id'] ?? null,
+                        'expires' => $event['expires_on'] ?? null,
+                        'revoked' => [],
+                        'alias_id' => $issuerid,
+                        'log_entry' => $log_entry ?? [],
+                        'timestamp' => $event['ctime'] ?? null,
+                        '_total' => $data['total']
+                    );
 
                 $rec_begin = min($rec_begin, $event['ctime']);
                 $rec_end = max($rec_end, $event['ctime']);
@@ -1214,9 +1236,12 @@ class obf_client {
      * @param int $issuedon The issuance date as a Unix timestamp
      * @param string $email The email to send (template).
      * @param string $criteriaaddendum The criteria addendum.
+     * @param string $course The course name.
+     * @param string $activity The activity name.
+     * @param string|null $client_alias_id
      */
 
-    public function issue_badge(obf_badge $badge, $recipients, $issuedon, $email, $criteriaaddendum, $course, $activity) {
+    public function issue_badge(obf_badge $badge, $recipients, $issuedon, $email, $criteriaaddendum, $course, $activity, $client_alias_id = null) {
         global $CFG, $DB;
 
         // Before doing anything we test connection.
@@ -1407,6 +1432,11 @@ class obf_client {
                 'wwwroot' => $CFG->wwwroot
             ]
         ];
+
+        // Add client alias id to the params if provided
+        if (!empty($client_alias_id)) {
+            $params['client_alias_id'] = $client_alias_id;
+        }
 
         if (!is_null($email)) {
             $params['email_message'] = [

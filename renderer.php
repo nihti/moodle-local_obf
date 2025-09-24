@@ -660,6 +660,17 @@ class local_obf_renderer extends plugin_renderer_base {
         $badgedetails .= $this->print_heading('issuerdetails');
         $badgedetails .= $this->render_issuer_details($issuer);
 
+        // Sub-organisation (aka aliases) section.
+        $aliases = $badge->get_aliases();
+        foreach ($aliases ?? [] as $alias) {
+            $alias_names[] = html_writer::tag('dd', $alias['name']);
+        }
+
+        if (!empty($alias_names)) {
+            $badgedetails .= $this->print_heading('suborganization');
+            $badgedetails .= html_writer::tag('dd', implode('', $alias_names));
+        }
+
         $boxes .= local_obf_html::div($badgedetails, 'obf-badgedetails');
         $html .= local_obf_html::div($boxes, 'obf-badgewrapper');
 
@@ -1028,6 +1039,108 @@ class local_obf_renderer extends plugin_renderer_base {
      * Renders badge issuance history.
      *
      * @param obf_client $client
+     * @param obf_badge $badge
+     * @param context $context
+     * @param int $currentpage
+     * @param obf_issue_event[] $eventfilter
+     * @return string HTML
+     */
+    public function print_badge_info_history(obf_client $client, obf_badge $badge = null, context $context, $currentpage = 0,
+        $eventfilter = null) {
+        $singlebadgehistory = !is_null($badge);
+
+        $history = $singlebadgehistory ? $badge->get_assertions() : obf_assertion::get_assertions($client);
+        if (!is_null($eventfilter)) {
+            $eventidfilter = array();
+            foreach ($eventfilter as $event) {
+                $eventidfilter[] = $event->get_eventid();
+            }
+            $newhistory = new obf_assertion_collection();
+            foreach ($history as $assertion) {
+                if (in_array($assertion->get_id(), $eventidfilter)) {
+                    $newhistory->add_assertion($assertion);
+                }
+            }
+            $history = $newhistory;
+        }
+        $historytable = new html_table();
+        $historytable->attributes = array('class' => 'local-obf generaltable historytable');
+
+        $html = $this->print_heading('history', 2);
+
+        if (isset($badge)) {
+            $csvbutton = $this->csv_button($badge);
+            $html .= $csvbutton;
+        }
+        $historysize = count($history);
+        $langkey = $singlebadgehistory ? 'nobadgehistory' : 'nohistory';
+
+        if ($historysize == 0) {
+            $html .= $this->output->notification(get_string($langkey, 'local_obf'), 'generalbox');
+        } else {
+            // Paging settings.
+            $perpage = 10; // TODO: Hard-coded here.
+            if ($this->page->pagetype == 'local-obf-courseuserbadges') {
+                $path = '/local/obf/courseuserbadges.php';
+            } else {
+                $path = '/local/obf/badge.php';
+            }
+
+            $urlparams = $singlebadgehistory ? array('action' => 'show', 'id' => $badge->get_id(), 'show' => 'history') :
+                array('action' => 'history');
+
+            $urlparams['clientid'] = $client->client_id();
+
+            if (!$singlebadgehistory && $context instanceof context_course) {
+                $urlparams['courseid'] = $context->instanceid;
+            }
+
+            $url = new moodle_url($path, $urlparams);
+            $pager = new paging_bar($historysize, $currentpage, $perpage, $url, 'page');
+            $htmlpager = $this->render($pager);
+            $startindex = $currentpage * $perpage;
+            $endindex = $startindex + $perpage > $historysize ? $historysize : $startindex + $perpage;
+
+            // Heading row.
+            $headingrow = array();
+
+            if (!$singlebadgehistory) {
+                $headingrow[] = new local_obf_table_header('badgename');
+                $historytable->headspan = array(2, 1, 1, 1, 1);
+            } else {
+                $historytable->headspan = array();
+            }
+
+            $headingrow[] = new local_obf_table_header('recipients');
+            $headingrow[] = new local_obf_table_header('issuedon');
+            $headingrow[] = new local_obf_table_header('expiresby');
+            $headingrow[] = new local_obf_table_header('issuer');
+            $headingrow[] = new local_obf_table_header('issuedfrom');
+            $headingrow[] = new html_table_cell();
+            $historytable->head = $headingrow;
+
+            // Add history rows.
+            for ($i = $startindex; $i < $endindex; $i++) {
+                $assertion = $history->get_assertion($i);
+                $users = $history->get_assertion_users($assertion);
+
+                if ($users) {
+                    $historytable->data[] = $this->render_historytable_row($assertion, $singlebadgehistory, $path, $users);
+                }
+            }
+
+            $html .= $htmlpager;
+            $html .= html_writer::table($historytable);
+            $html .= $htmlpager;
+        }
+
+        return $html;
+    }
+
+    /**
+     * Renders badge issuance history.
+     *
+     * @param obf_client $client
      * @param context $context
      * @param int $historysize
      * @param int $currentpage
@@ -1115,6 +1228,7 @@ class local_obf_renderer extends plugin_renderer_base {
             $headingrow[] = new local_obf_table_header('recipients');
             $headingrow[] = new local_obf_table_header('issuedon');
             $headingrow[] = new local_obf_table_header('expiresby');
+            $headingrow[] = new local_obf_table_header('issuer');
             $headingrow[] = new local_obf_table_header('issuedfrom');
             $headingrow[] = new html_table_cell();
             $historytable->head = $headingrow;
@@ -1192,6 +1306,7 @@ class local_obf_renderer extends plugin_renderer_base {
         $row->cells[] = $recipienthtml;
         $row->cells[] = userdate($assertion->get_issuedon(), get_string('dateformatdate', 'local_obf'));
         $row->cells[] = $expirationdate;
+        $row->cells[] = s($assertion->get_issuer_name());
         $row->cells[] = $courses;
         $row->cells[] = html_writer::link(new moodle_url('/local/obf/event.php',
             array('id' => $assertion->get_id(), 'clientid' => $this->get_client_id(), 'course_id' => $logs)),

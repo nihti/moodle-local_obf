@@ -1327,7 +1327,7 @@ class local_obf_renderer extends plugin_renderer_base {
      * @return string client form as HTML
      */
     public function render_client_selector($url, $clientid) {
-        $clients = obf_client::get_available_clients();
+        $clients = obf_client::get_available_clients(); 
         if (count($clients) < 2) {
             return '';
         }
@@ -1340,6 +1340,18 @@ class local_obf_renderer extends plugin_renderer_base {
         } else {
             $selected = $clientid;
         }
+/*         if (count($clients) < 2) {
+            return '';
+        }
+
+        if (empty($clientid)) {
+            foreach ($clients as $key => $unused) {
+                $selected = $key;
+                break;
+            }
+        } else {
+            $selected = $clientid;
+        } */
 
         return html_writer::div($this->single_select($url, 'clientid', $clients, $selected, null), 'obf-category-wrapper');
     }

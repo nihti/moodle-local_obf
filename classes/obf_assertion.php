@@ -324,6 +324,7 @@ class obf_assertion {
      */
     // TODO: Support getting more recipients by allowing get_event() to accept offset parameter.
     public static function get_instance_by_id($id, obf_client $client, int $offset = 0) {
+        error_log('[OBF] get_instance_by_id(): id='.$id.' offset='.$offset);
         $arr = $client->get_event($id, $offset);
         $obj = self::get_instance()->set_emailbody($arr['email_body']);
         $obj->set_emailfooter($arr['email_footer'])->set_emailsubject($arr['email_subject']);
@@ -810,8 +811,30 @@ class obf_assertion {
      * @param $key
      * @return mixed
      */
-    public function get_log_entry($key) {
-        return isset($this->logentry[$key]) ? $this->logentry[$key] : null;
+    public function get_log_entry(string $key) {
+        if (!is_array($this->logentry) || !array_key_exists($key, $this->logentry)) {
+            return null;
+        }
+
+        $value = $this->logentry[$key];
+
+        // Jos arvo on array, ota ensimmäinen ei-tyhjä skalaari.
+        if (is_array($value)) {
+            foreach ($value as $v) {
+                if (is_scalar($v) && $v !== '') {
+                    return $v;
+                }
+            }
+            // Ei löytynyt kelvollista skalaaria.
+            return null;
+        }
+
+        // Jos ei skalaari, hylätään.
+        if (!is_scalar($value)) {
+            return null;
+        }
+
+        return $value;
     }
 
     /**
@@ -819,6 +842,36 @@ class obf_assertion {
      * @return $this
      */
     public function set_log_entry($logentry) {
+        // 1) Jos string → yritetään JSON-dekoodata.
+        if (is_string($logentry)) {
+            $decoded = json_decode($logentry, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                $logentry = $decoded;
+            } else {
+                $this->logentry = [];
+                return $this;
+            }
+        }
+
+        // 2) Jos edelleen ei array → tyhjä.
+        if (!is_array($logentry)) {
+            $this->logentry = [];
+            return $this;
+        }
+
+        // 2b) Jos logentry on "listamainen" array (0,1,2...) jossa sisällä associative rivejä,
+        //     litistetään eka elementti.
+        if (array_key_exists(0, $logentry) && is_array($logentry[0])) {
+            $logentry = $logentry[0];
+        }
+
+        // 3) Normalisoi: jos arvo on array, ota ensimmäinen elementti.
+        foreach ($logentry as $key => $value) {
+            if (is_array($value)) {
+                $logentry[$key] = reset($value);
+            }
+        }
+
         $this->logentry = $logentry;
         return $this;
     }

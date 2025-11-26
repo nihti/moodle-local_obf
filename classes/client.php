@@ -418,8 +418,14 @@ class obf_client {
     public function request($method, $url = '', $params = array(), $retry = true, $otheroauth2 = null) {
         global $DB;
 
+        
+
         $curl = $this->get_transport();
         $options = $this->get_curl_options();
+
+        error_log(
+            '[OBF] request debug: ' . $method . ' ' . $url . ' ' . json_encode($params)
+        );
 
         if ($method === 'get') {
             $response = $curl->get($url, $params, $options);
@@ -461,7 +467,18 @@ class obf_client {
             }
         }
 
+        if ($this->httpcode < 200 || $this->httpcode >= 300) {
+            $raw = is_string($response) ? $response : json_encode($response);
+            error_log('[OBF] API error body: ' . mb_substr($raw ?? '', 0, 2000));
+        }
+
+
         $this->httpcode = $info['http_code'];
+        // 2) Lokita vastaus.
+        error_log(
+            '[OBF] response debug: http_code=' .$this->httpcode . ' body=' . substr((string)$response, 0, 500)
+        );
+
         $this->error = '';
 
         // Codes 2xx should be ok.
@@ -1020,7 +1037,7 @@ class obf_client {
      */
     // TODO: Re-enabled offset parameter later when load-more functionality is integrated.
     public function get_event($eventid, $offset = 0) {
-
+        error_log('[OBF] get_event() debug: eventid='.$eventid.' offset='.$offset);
         $url = $this->obf_url() . '/v2/event/' . $this->client_id() . '/' . $eventid;
         $res = $this->request('get', $url);
         $event = json_decode($res, true);

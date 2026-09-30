@@ -113,14 +113,17 @@ switch ($action) {
         $content .= $PAGE->get_renderer('local_obf')->render_client_selector($url, $clientid);
 
         try {
-            $badges = obf_badge::get_badges();
-
             if ($context instanceof context_system) {
+                $badges = obf_badge::get_badges();
                 $content .= $PAGE->get_renderer('local_obf')->render_badgelist($badges,
                     $hasissuecapability, $context, $message);
             } else {
+                // "Badges related to the course" lists badges that are associated with the course.
+                // "All badges" lists only the badges allowed by the category rules in the course.
+                $availablebadges = obf_badge::get_badges(null, false);
+                $badges = obf_badge::filter_by_category_rules($availablebadges, $courseid);
                 $content .= $PAGE->get_renderer('local_obf')->render_badgelist_course($badges,
-                    $hasissuecapability, $context, $message);
+                    $hasissuecapability, $context, $message, $availablebadges);
             }
         } catch (Exception $e) {
             $content .= $OUTPUT->notification($e->getMessage(), 'notifyproblem');

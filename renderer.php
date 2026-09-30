@@ -100,13 +100,14 @@ class local_obf_renderer extends plugin_renderer_base {
     /**
      * Renders the list of badges in course context
      *
-     * @param obf_badge[] $badges
+     * @param obf_badge[] $badges The badges allowed by the client category rules in the course ("All badges").
      * @param bool $hasissuecapability
      * @param context $context
      * @param string $message
+     * @param obf_badge[]|null $availablebadges All badges of the connection, not filtered by category rules, for "Badges related to this course". Defaults to $badges.
      * @return string
      */
-    public function render_badgelist_course($badges, $hasissuecapability, context $context, $message = '') {
+    public function render_badgelist_course($badges, $hasissuecapability, context $context, $message = '', $availablebadges = null) {
         $html = '';
 
         if (!empty($message)) {
@@ -114,25 +115,13 @@ class local_obf_renderer extends plugin_renderer_base {
         }
 
         $html .= $this->render_badge_categories($badges);
-        $badgesincourse = obf_badge::get_badges_in_course($context->instanceid, $this->get_client_id());
+        $badgesincourse = obf_badge::get_badges_in_course($context->instanceid, $availablebadges ?? $badges);
         $html .= $this->print_heading('coursebadgelisttitle', 2);
-        $errormsg = $this->output->notification(get_string('nobadgesincourse', 'local_obf'));
 
         if (count($badgesincourse) == 0) {
-            $html .= $errormsg;
+            $html .= $this->output->notification(get_string('nobadgesincourse', 'local_obf'));
         } else {
-            $validbadges = array();
-
-            foreach ($badgesincourse as $badge) {
-                // Badge is deleted from OBF, but there are still rules in the
-                // database. It shouldn't happen in practice, but in theory
-                // it's possible. We should handle it better.
-                if ($badge->has_name()) {
-                    $validbadges[] = $badge;
-                }
-            }
-
-            $html .= count($validbadges) > 0 ? $this->render_badges($validbadges, $hasissuecapability, $context) : $errormsg;
+            $html .= $this->render_badges($badgesincourse, $hasissuecapability, $context);
         }
 
         $html .= $this->print_heading('badgelisttitle', 2);

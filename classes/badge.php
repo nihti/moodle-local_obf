@@ -233,12 +233,13 @@ class obf_badge {
     /**
      * Gets and returns the badges from OBF.
      *
-     * @param obf_client $client The client instance.
+     * @param obf_client|null $client The client instance.
+     * @param bool $applycategoryrules Filter badges by the category rules of the course in the page url.
      * @return obf_badge[] The badges.
      */
-    public static function get_badges(obf_client $client = null) {
+    public static function get_badges(?obf_client $client = null, $applycategoryrules = true) {
         $client = is_null($client) ? obf_client::get_instance() : $client;
-        $badgearr = $client->get_badges(self::get_available_categories());
+        $badgearr = $client->get_badges(self::get_available_categories(), '', $applycategoryrules);
 
         foreach ($badgearr as $badgedata) {
             if ($badgedata['readyforissuing']) {
@@ -248,6 +249,27 @@ class obf_badge {
         }
 
         return self::$badgecache;
+    }
+
+    /**
+     * Returns the badges allowed by the category rules of the connection in a course.
+     *
+     * @param obf_badge[] $badges
+     * @param int $courseid
+     * @param obf_client|null $client The client instance. 
+     * @return obf_badge[] The allowed badges.
+     */
+    public static function filter_by_category_rules(array $badges, $courseid, ?obf_client $client = null) {
+        $client = is_null($client) ? obf_client::get_instance() : $client;
+        $categories = $client->get_allowed_categories($courseid, self::get_available_categories());
+        if (is_null($categories)) {
+            return array();
+        }
+
+        $filtered = array_filter($badges, function ($badge) use ($categories) {
+            return obf_client::badge_in_categories($badge->get_categories(), $categories);
+        });
+        return $filtered;
     }
 
     /**
@@ -662,43 +684,20 @@ class obf_badge {
     /**
      * Returns the badges associated with course identified by $courseid.
      *
+     * Only badges that are neither hidden (OBF API) nor draft in $availablebadges are returned.
+     * Hidden: OBF "Visible in external tools" unchecked. Draft: OBF "Ready for issuing" unchecked.
+     * Category rules are not applied.
+     *
      * @param int $courseid
-     * @return obf_badge[] The badges.
+     * @param obf_badge[] $availablebadges The badges of the client, keyed by badge id.
+     * @return obf_badge[] The badges, keyed by badge id, that are associated with the course.
      */
-    public static function get_badges_in_course($courseid, $clientid = null) {
-        global $DB;
-
-        $criteria = obf_criterion::get_course_criterion($courseid);
+    public static function get_badges_in_course($courseid, array $availablebadges) {
         $badges = array();
-
-        // TODO: It appears that the categories are not returned in the simple API request.
-        //  "Single badge by ID: GET /v1/badge/{client_id}/{badge_id}".
-        //  In the meantime, this piece of code serves as a workaround.
-        //  but it would be desirable to have the categories at the correct level.
-        // If any rules are define on site we will prevent issue badge
-        // in case there is no rule for current categ badge and at last one define on site.
-        $anyrulesdefinesql = "SELECT * FROM {local_obf_rulescateg}";
-        $anyrules = $DB->get_records_sql($anyrulesdefinesql);
-
-        foreach ($criteria as $criterion) {
-            if ($clientid && $clientid !== $criterion->get_clientid()) {
-                continue;
-            }
-
-            if (!empty($anyrules)) {
-
-                $client = obf_client::get_instance();
-                $badgeslist = $client->get_badges();
-
-                foreach ($badgeslist as $badge) {
-                    if ($badge['id'] == $criterion->get_badge()->get_id()) {
-                        $allowdisplay = true;
-                    }
-                }
-            }
-
-            if (isset($allowdisplay) || empty($anyrules)) {
-                $badges[] = $criterion->get_badge();
+        foreach (obf_criterion::get_course_criterion($courseid) as $criterion) {
+            $badgeid = $criterion->get_badgeid();
+            if (isset($availablebadges[$badgeid]) && !$availablebadges[$badgeid]->is_draft()) {
+                $badges[$badgeid] = $availablebadges[$badgeid];
             }
         }
 

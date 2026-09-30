@@ -493,67 +493,101 @@ class obf_client {
     }
 
     /**
-     * Get all the badges from the API.
+     * Returns the badge categories allowed by the category rules of this connection in a course.
      *
-     * @param string[] $categories Filter badges by these categories.
-     * @return array The badges data.
+     * @param int|null $courseid The course, or null outside course context.
+     * @param string[] $categories Legacy parameter, always empty, no UI.
+     *      TODO: Remove the $categories parameter together with obf_badge::get_available_categories() and the 'availablecategories' setting. 
+     *          Consider removing $categories parameter of get_badges() and get_badges_all(), 
+     *          the calls in obf_badge::get_badges() and obf_badge::filter_by_category_rules(), 
+     *          and the filter in renderer::render_badge_categories() at the same time.
+     * @return string[]|null The allowed categories:
+     *  - [] = all categories are allowed
+     *  - null = no categories are allowed
+     *  - ['cat1', 'cat2'] = only these categories are allowed
      */
-    public function get_badges(array $categories = array(), $query = '') {
+    public function get_allowed_categories($courseid, array $categories = array()) {
         global $DB;
 
-        $params = array('draft' => 0);
+        if (!$courseid) {
+            return $categories;
+        }
 
-        // Checks rules.
-        // Add categories to request if special rules are set.
-        $courseid = optional_param('courseid', null, PARAM_INT);
-        if ($courseid) {
-            $course = get_course($courseid);
+        $course = get_course($courseid);
 
-            $categoryid = $course->category;
+        $categoryid = $course->category;
 
-            // Get the category path.
-            $categorypath = $DB->get_field('course_categories', 'path', ['id' => $categoryid]);
+        // Get the category path.
+        $categorypath = $DB->get_field('course_categories', 'path', ['id' => $categoryid]);
 
-            // Split the category path into an array of category IDs.
-            $categoryids = explode('/', trim($categorypath, '/'));
+        // Split the category path into an array of category IDs.
+        $categoryids = explode('/', trim($categorypath, '/'));
 
-            // Add the current category ID to the array.
-            $categoryids[] = $categoryid;
+        // Add the current category ID to the array.
+        $categoryids[] = $categoryid;
 
-            // Prepare the placeholders for the SQL query.
-            $placeholders = implode(',', array_fill(0, count($categoryids), '?'));
+        // Prepare the placeholders for the SQL query.
+        $placeholders = implode(',', array_fill(0, count($categoryids), '?'));
 
-            // If any rules are define on site we will prevent display categories in case there is no rule for current categ.
-            $anyrulesdefinesql = "SELECT * FROM {local_obf_rulescateg}";
-            $anyrules = $DB->get_records_sql($anyrulesdefinesql);
+        // Check if there are any category rules for the current OAuth2 connection.
+        $oauth2id = isset($this->oauth2->id) ? $this->oauth2->id : 0;
+        $anyrules = $DB->record_exists('local_obf_rulescateg', ['oauth2_id' => $oauth2id]);
 
-            // Construct the SQL query.
-            $sql = "SELECT * FROM {local_obf_rulescateg} WHERE oauth2_id = ? AND (coursecategorieid IN ($placeholders))";
-            $args = [obf_client::get_instance()->oauth2->id];
-            $args = array_merge($args, $categoryids);
+        // Construct the SQL query.
+        $sql = "SELECT * FROM {local_obf_rulescateg} WHERE oauth2_id = ? AND (coursecategorieid IN ($placeholders))";
+        $args = [$oauth2id];
+        $args = array_merge($args, $categoryids);
+        $rules = $DB->get_records_sql($sql, $args);
+        // Connection has category rules, but none cover the course category. 
+        // return null = no categories are allowed.
+        if (empty($rules) && $anyrules) {
+            return null;
+        }
 
-            $rules = $DB->get_records_sql($sql, $args);
-
-            $haszero = false; // Variable to track if at least one occurrence of zero is found.
-
-            foreach ($rules as $rule) {
-                if ($rule->badgecategoriename === '0' || $rule->badgecategoriename === null) {
-                    $haszero = true; // An occurrence of zero is found.
-                    break; // Exit the loop as soon as an occurrence is found.
-                }
-
-                if (!in_array($rule->badgecategoriename, $categories)) {
-                    $categories[] = $rule->badgecategoriename;
-                }
+        foreach ($rules as $rule) {
+            // OBF category "All" ('0') or with no OBF category selected (null).
+            // return [] = all categories are allowed.
+            if ($rule->badgecategoriename === '0' || $rule->badgecategoriename === null) {
+                return [];
             }
 
-            if ($haszero) {
-                $categories = []; // Reset $categories to null if an occurrence of zero is found.
+            // Allowed categories are collected in the $categories array.
+            if (!in_array($rule->badgecategoriename, $categories)) {
+                $categories[] = $rule->badgecategoriename;
             }
         }
 
-        if (empty($rules) && !empty($anyrules)) {
-            return [];
+        return $categories;
+    }
+
+    /**
+     * Checks whether a badge belongs to any of the given categories.
+     *
+     * @param mixed $badgecategories The categories of the badge.
+     * @param string[] $categories The allowed categories, [] means all categories.
+     * @return bool
+     */
+    public static function badge_in_categories($badgecategories, array $categories) {
+        return empty($categories) || (is_array($badgecategories) && !empty(array_intersect($badgecategories, $categories)));
+    }
+
+    /**
+     * Get all the badges from the API.
+     *
+     * @param string[] $categories Filter badges by categories.
+     * @param string $query Filter badges by name.
+     * @param bool $applycategoryrules Filter badges by the category rules of the course in the page url.
+     * @return array The badges data.
+     */
+    public function get_badges(array $categories = array(), $query = '', $applycategoryrules = true) {
+        $params = array('draft' => 0);
+
+        if ($applycategoryrules) {
+            $categories = $this->get_allowed_categories(optional_param('courseid', null, PARAM_INT), $categories);
+            if (is_null($categories)) {
+                // No categories are allowed, return empty array.
+                return [];
+            }
         }
 
         if (!empty($query)) {
@@ -583,13 +617,8 @@ class obf_client {
             // Handle the response data to align with badge.php expectations.
             foreach ($batch as $badge) {
                 // Filter badges by categories if categories are provided.
-                if (!empty($categories)) {
-                    if (
-                        !isset($badge['category']) || !is_array($badge['category']) ||
-                        !array_intersect($badge['category'], $categories)
-                    ) {
-                        continue;
-                    }
+                if (!self::badge_in_categories($badge['category'] ?? null, $categories)) {
+                    continue;
                 }
 
                 // Filter badges by query if query is provided.
